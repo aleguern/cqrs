@@ -1,0 +1,165 @@
+Transform: AWS::Serverless-2016-10-31
+
+Resources:
+  DynamoTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: DynamoTable
+      StreamSpecification:
+        StreamViewType: NEW_IMAGE
+      AttributeDefinitions:
+        - AttributeName: 'id'
+          AttributeType: S
+      KeySchema:
+        - AttributeName: 'id'
+          KeyType: HASH
+      ProvisionedThroughput:
+        ReadCapacityUnits: 1
+        WriteCapacityUnits: 1
+
+  DynamoTableRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: DynamoTableRole
+      Path: '/'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: 'Allow'
+            Principal:
+              Service:
+                - 'appsync.amazonaws.com'
+            Action:
+              - 'sts:AssumeRole'
+  DynamoTableRoleRolePolicy:
+    Type: 'AWS::IAM::Policy'
+    Properties:
+      PolicyName: 'DynamoTableRoleWrite'
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: 'Allow'
+            Action:
+              - 'dynamodb:PutItem'
+              - 'dynamodb:GetItem'
+            Resource: '*'
+      Roles:
+        - !Ref DynamoTableRole
+
+  GraphQLApi:
+    Type: AWS::AppSync::GraphQLApi
+    Properties:
+      Name: SampleAPI
+      AuthenticationType: API_KEY
+
+  GraphQLApiKey:
+    Type: AWS::AppSync::ApiKey
+    Properties:
+      ApiId: !GetAtt GraphQLApi.ApiId
+
+  MutationApiGraphQLSchema:
+    Type: AWS::AppSync::GraphQLSchema
+    Properties:
+      ApiId: !GetAtt GraphQLApi.ApiId
+      Definition: |
+        type Mutation {
+          createEvent(type: String!, amount: Int!, version: String!): Event
+        }
+        type Query {
+          getEvent(id: String): Event
+        }
+        type Schema {
+          mutation: Mutation
+          query: Query
+        }
+        type Event {
+          id: String
+          version: String
+          type: String
+          timestamp: String
+          amount: Int
+          data: Todo
+        }
+        type Todo {
+          title: String
+        }
+
+  CreateEventApiGraphQLResolver:
+    Type: AWS::AppSync::Resolver
+    Properties:
+      ApiId: !GetAtt GraphQLApi.ApiId
+      DataSourceName: !GetAtt ApiGraphQLDataSource.Name
+      RequestMappingTemplate: |
+        {
+          "version": "2017-02-28",
+          "operation": "PutItem",
+          "key": {
+            "id": $util.dynamodb.toDynamoDBJson($util.autoId()),
+          },
+          "attributeValues": {
+            "type": $util.dynamodb.toDynamoDBJson($ctx.args.type),
+            "timestamp": $util.dynamodb.toDynamoDBJson($util.time.nowISO8601()),
+            "version": $util.dynamodb.toDynamoDBJson($ctx.args.version),
+            "amount": $util.dynamodb.toDynamoDBJson($ctx.args.amount),
+          }
+        }
+      ResponseMappingTemplate: '$util.toJson($ctx.result)'
+      FieldName: createEvent
+      TypeName: Mutation
+
+  ApiGraphQLDataSource:
+    Type: AWS::AppSync::DataSource
+    Properties:
+      Name: MutationAPIDataSource
+      ApiId: !GetAtt GraphQLApi.ApiId
+      ServiceRoleArn: !GetAtt DynamoTableRole.Arn
+      Type: AMAZON_DYNAMODB
+      DynamoDBConfig:
+        AwsRegion: eu-west-1
+        TableName: !Ref DynamoTable
+
+  EventBus:
+    Type: AWS::Events::EventBus
+    Properties:
+      Name: EventBus
+
+  WriteToEventBus:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: code/
+      Runtime: nodejs12.x
+      Handler: index.putEvent
+      Environment:
+        Variables:
+          EVENTBUS_NAME: !GetAtt EventBus.Name
+      Events:
+        DDBEvent:
+          Type: DynamoDB
+          Properties:
+            StartingPosition: LATEST
+            Stream: !GetAtt DynamoTable.StreamArn
+
+  EventTrigger:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: code/
+      Runtime: nodejs12.x
+      Handler: index.eventTrigger
+      Policies:
+        - EventBridgePutEventsPolicy:
+            EventBusName:
+              !GetAtt EventBus.Name
+      Events:
+        CWEvent:
+          Type: CloudWatchEvent
+          Properties:
+            EventBusName: !GetAtt EventBus.Name
+            Pattern:
+              source:
+                - 'event_store'
+
+Outputs:
+  GraphQLEndpoint:
+    Value: !GetAtt GraphQLApi.GraphQLUrl
+  GraphQLApiKey:
+    Value: !GetAtt GraphQLApiKey.ApiKey

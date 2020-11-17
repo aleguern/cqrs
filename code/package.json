@@ -1,0 +1,21 @@
+{
+  "name": "infra2",
+  "version": "1.0.0",
+  "description": "- export your AWS credentials - ```aws cloudformation create-stack --stack-name graphqlMutationApi --template-body file://template.yaml --region eu-west-1 --capabilities CAPABILITY_NAMED_IAM```",
+  "main": "index.js",
+  "dependencies": {
+    "aws-sdk": "^2.792.0"
+  },
+  "devDependencies": {},
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aleguern/appSync.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/aleguern/appSync/issues"
+  },
+  "homepage": "https://github.com/aleguern/appSync#readme"
+}
